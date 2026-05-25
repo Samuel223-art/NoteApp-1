@@ -15,53 +15,76 @@ def discover_novels():
     )
 
     base_url = "https://asurascans.com"
-    browse_url = f"{base_url}/browse"
+    new_found_total = 0
+    page_num = 1
 
-    print(f"[Discovery] Fetching {browse_url}...")
-    try:
-        response = scraper.get(browse_url, timeout=15)
-        if response.status_code != 200:
-            print(f"[Error] Failed to fetch browse page: {response.status_code}")
-            return
+    print("[Discovery] Starting paginated discovery...")
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+    while new_found_total < 10:
+        browse_url = f"{base_url}/browse?page={page_num}"
+        print(f"[Discovery] Fetching Page {page_num}: {browse_url}...")
 
-        novel_links = []
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if '/comics/' in href:
-                if href.startswith('/'):
-                    href = f"{base_url}{href}"
-                if href not in novel_links:
-                    novel_links.append(href)
-
-        print(f"[Discovery] Found {len(novel_links)} novel links on page.")
-
-        new_found = 0
-        for link in novel_links:
-            if new_found >= 10:
+        try:
+            response = scraper.get(browse_url, timeout=15)
+            if response.status_code != 200:
+                print(f"[Error] Failed to fetch page {page_num}: {response.status_code}")
                 break
 
-            novel_id = link.rstrip('/').split('/')[-1]
-            if not novel_id or novel_id == 'comics': continue
+            soup = BeautifulSoup(response.text, 'html.parser')
 
-            existing = db.get_document("novels", novel_id)
-            if not existing:
-                print(f"[Discovery] New novel found: {novel_id}")
-                data = {
-                    "url": link,
-                    "status": "discovered",
-                    "created_at": int(time.time())
-                }
-                if db.save_document("novels", novel_id, data):
-                    new_found += 1
-            else:
-                pass
+            novel_links = []
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                if '/comics/' in href:
+                    if href.startswith('/'):
+                        href = f"{base_url}{href}"
+                    if href not in novel_links:
+                        novel_links.append(href)
 
-        print(f"[Discovery] Finished. Added {new_found} new novels.")
+            if not novel_links:
+                print(f"[Discovery] No novels found on page {page_num}. Stopping.")
+                break
 
-    except Exception as e:
-        print(f"[Discovery Error] {e}")
+            print(f"[Discovery] Found {len(novel_links)} novel links on page {page_num}.")
+
+            page_already_seen = True
+            for link in novel_links:
+                if new_found_total >= 10:
+                    break
+
+                novel_id = link.rstrip('/').split('/')[-1]
+                if not novel_id or novel_id == 'comics': continue
+
+                # Check if exists
+                existing = db.get_document("novels", novel_id)
+                if not existing:
+                    print(f"  [New] Novel found: {novel_id}")
+                    data = {
+                        "url": link,
+                        "status": "discovered",
+                        "created_at": int(time.time())
+                    }
+                    if db.save_document("novels", novel_id, data):
+                        new_found_total += 1
+                        page_already_seen = False
+                else:
+                    # Novel already exists, so this link was seen before
+                    pass
+
+            # If every novel on this page was already in our database,
+            # we've likely caught up to where we left off.
+            if page_already_seen:
+                print(f"[Discovery] All novels on page {page_num} are already in database. Stopping.")
+                break
+
+            page_num += 1
+            time.sleep(1) # Small delay between pages
+
+        except Exception as e:
+            print(f"[Discovery Error] {e}")
+            break
+
+    print(f"[Discovery] Finished. Added {new_found_total} new novels total.")
 
 if __name__ == "__main__":
     discover_novels()
